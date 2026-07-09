@@ -1,0 +1,735 @@
+---
+title: "A Comparative Classification Analysis on Stroke Prediction"
+author: "Niloy Paul, Mithila Chowdhury Medha, Anik Mistry"
+date: "`r Sys.Date()`"
+output: html_document
+---
+```{r setup, include=FALSE}
+
+# SETUP: Global chunk options and reproducibility seed
+
+knitr::opts_chunk$set(
+	fig.align = "center",
+	fig.height = 5,
+	fig.width = 9
+)
+set.seed(42)  # For full reproducibility across all models and splits
+```
+
+# Data Collection & Description
+
+## Dataset Overview
+
+This project uses the Healthcare Dataset of Stroke Prediction sourced
+from Kaggle
+(<https://www.kaggle.com/datasets/fedesoriano/stroke-prediction-dataset>).
+
+The dataset contains health attributes that may predict
+the likelihood of a stroke. It includes 5,110 observations and 12
+variables (both categorical and numerical).
+
+## Install & Load Required Libraries
+
+```{r Load Libraries}
+
+required_packages <- c(
+  "tidyverse",    # Data manipulation and visualization
+  "ggplot2",      # Advanced plotting
+  "corrplot",     # Correlation matrix visualization
+  "gridExtra",    # Multi-panel plots
+  "caret",        # Unified ML training and evaluation framework
+  "randomForest", # Random Forest classifier
+  "xgboost",      # XGBoost classifier
+  "e1071",        # Support Vector Machine
+  "ROSE",         # Random Over-Sampling Examples (class imbalance)
+  "knitr",        # Table formatting
+  "kableExtra",   # Enhanced table styling
+  "scales",       # Axis formatting in ggplot
+  "pROC",         # ROC curve analysis
+  "ggcorrplot"    # Correlation plot with ggplot2 style
+)
+
+# Auto-install any missing package
+new_packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
+if (length(new_packages) > 0) {
+  install.packages(new_packages, repos = "https://cran.r-project.org", quiet = TRUE)
+}
+
+# Load all libraries
+invisible(lapply(required_packages, library, character.only = TRUE))
+
+cat("All libraries loaded successfully.\n")
+```
+
+## Automated Data Import (via Google Drive URL)
+
+```{r Dataset Import}
+
+file_id <- "1Z28Czhbfn2zglnz9vAg0TYgmIrQeHRxE"  
+
+gdrive_url <- paste0("https://drive.google.com/uc?export=download&id=", file_id)
+
+temp_file <- tempfile(fileext = ".csv")
+
+tryCatch({
+  download.file(gdrive_url, destfile = temp_file, mode = "wb", quiet = TRUE)
+  stroke_raw <- read.csv(temp_file, stringsAsFactors = FALSE, na.strings = c("N/A", "NA", ""))
+  cat("Dataset loaded successfully from Google Drive.\n")
+}, error = function(e) {
+  stop("Failed to load dataset from Google Drive. Please verify the file_id and sharing permissions.\n",
+       "Error: ", conditionMessage(e))
+})
+
+cat("\nFirst 5 rows of the raw dataset:\n")
+head(stroke_raw, 5)
+```
+
+
+## Dataset Description
+
+```{r Dataset Description}
+
+cat("Dataset Dimensions:", nrow(stroke_raw), "rows x", ncol(stroke_raw), "columns\n\n")
+
+cat("Column Names and Types:\n")
+str(stroke_raw)
+```
+
+# Exploratory Data Analysis (EDA)
+
+## Summary Statistics
+
+```{r EDA Summary}
+
+cat("--- Summary Statistics ---\n")
+summary(stroke_raw)
+```
+
+## Missing Values Detection
+
+```{r Missing Value}
+
+missing_counts <- colSums(is.na(stroke_raw))
+missing_pct    <- round(missing_counts / nrow(stroke_raw) * 100, 2)
+
+missing_df <- data.frame(
+  Column          = names(missing_counts),
+  Missing_Count   = missing_counts,
+  Missing_Percent = missing_pct
+) %>% filter(Missing_Count > 0)
+
+if (nrow(missing_df) == 0) {
+  cat("No missing values found.\n")
+} else {
+  kable(missing_df, row.names = FALSE,
+        caption = "Missing Values per Column") %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                  full_width = FALSE)
+}
+```
+
+## Target Variable Distribution
+
+```{r Target Class Distribution}
+
+stroke_counts <- stroke_raw %>%
+  count(stroke) %>%
+  mutate(
+    label   = ifelse(stroke == 1, "Stroke (1)", "No Stroke (0)"),
+    percent = round(n / sum(n) * 100, 1)
+  )
+
+ggplot(stroke_counts, aes(x = label, y = n, fill = label)) +
+  geom_bar(stat = "identity", width = 0.5, color = "white") +
+  geom_text(aes(label = paste0(n, "\n(", percent, "%)")),
+            vjust = -0.3, size = 4.5, fontface = "bold") +
+  scale_fill_manual(values = c("#2196F3", "#F44336")) +
+  labs(title = "Target Variable: Stroke Class Distribution",
+       x     = "Stroke Outcome",
+       y     = "Patient Count") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none") +
+  ylim(0, max(stroke_counts$n) * 1.15)
+```
+
+
+## Distribution of Numerical Features
+
+```{r Histogram-Numerical-Distribution}
+
+# EDA: Histograms for numerical feature distributions
+
+num_vars <- c("age", "avg_glucose_level", "bmi")
+
+plots <- lapply(num_vars, function(var) {
+  ggplot(stroke_raw %>% filter(!is.na(.data[[var]])),
+         aes(x = .data[[var]], fill = as.factor(stroke))) +
+    geom_histogram(bins = 30, alpha = 0.75, position = "identity") +
+    scale_fill_manual(values = c("#42A5F5", "#EF5350"),
+                      labels = c("No Stroke", "Stroke"),
+                      name   = "Outcome") +
+    labs(title = paste("Distribution of", var),
+         x = var, y = "Count") +
+    theme_minimal(base_size = 11)
+})
+
+do.call(grid.arrange, c(plots, ncol = 3))
+```
+
+
+## Distribution of Categorical Features
+
+```{r Bar Chart-Categorical-Distribution}
+
+# EDA: Bar charts for categorical feature distributions
+
+cat_vars <- c("gender", "ever_married", "work_type", "Residence_type", "smoking_status")
+
+cat_plots <- lapply(cat_vars, function(var) {
+  ggplot(stroke_raw %>% filter(!is.na(.data[[var]])),
+         aes(x = .data[[var]], fill = as.factor(stroke))) +
+    geom_bar(position = "fill", alpha = 0.85) +
+    scale_fill_manual(values = c("#42A5F5", "#EF5350"),
+                      labels = c("No Stroke", "Stroke"),
+                      name   = "Outcome") +
+    scale_y_continuous(labels = percent_format()) +
+    labs(title = paste("Stroke Rate by", var),
+         x = var, y = "Proportion") +
+    theme_minimal(base_size = 10) +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1))
+})
+
+do.call(grid.arrange, c(cat_plots, ncol = 2))
+```
+
+## Age vs Glucose Level: Stroke Overlay
+
+```{r Scatter Plot}
+
+# EDA: Scatter plot — age vs. glucose, colored by stroke
+
+ggplot(stroke_raw %>% filter(!is.na(bmi)),
+       aes(x = age, y = avg_glucose_level,
+           color = as.factor(stroke), alpha = as.factor(stroke))) +
+  geom_point(size = 1.8) +
+  scale_color_manual(values = c("0" = "#90CAF9", "1" = "#C62828"),
+                     labels = c("No Stroke", "Stroke"),
+                     name   = "Outcome") +
+  scale_alpha_manual(values = c("0" = 0.4, "1" = 0.9), guide = "none") +
+  labs(title  = "Age vs. Average Glucose Level by Stroke Outcome",
+       x      = "Age",
+       y      = "Average Glucose Level") +
+  theme_minimal(base_size = 13)
+```
+
+## Outlier Detection — Boxplots
+
+```{r Outlier Detection}
+
+# EDA: Boxplots to detect outliers in numerical variables
+
+stroke_long <- stroke_raw %>%
+  select(age, avg_glucose_level, bmi, stroke) %>%
+  pivot_longer(cols = c(age, avg_glucose_level, bmi),
+               names_to = "variable", values_to = "value") %>%
+  filter(!is.na(value))
+
+ggplot(stroke_long, aes(x = as.factor(stroke), y = value,
+                         fill = as.factor(stroke))) +
+  geom_boxplot(outlier.color = "red", outlier.alpha = 0.4,
+               alpha = 0.7, width = 0.5) +
+  scale_fill_manual(values = c("#42A5F5", "#EF5350"),
+                    labels = c("No Stroke", "Stroke"),
+                    name   = "Outcome") +
+  facet_wrap(~variable, scales = "free_y") +
+  labs(title = "Boxplots of Numerical Features by Stroke Outcome",
+       x     = "Stroke",
+       y     = "Value") +
+  theme_minimal(base_size = 13)
+```
+
+
+## Correlation Analysis
+
+```{r Correlation Martrix}
+
+# EDA: Correlation matrix among numerical features
+
+corr_data <- stroke_raw %>%
+  select(age, avg_glucose_level, bmi, hypertension, heart_disease, stroke) %>%
+  mutate(bmi = as.numeric(bmi)) %>%
+  na.omit()
+
+corr_matrix <- cor(corr_data)
+
+ggcorrplot(corr_matrix,
+           method    = "circle",
+           type      = "lower",
+           lab       = TRUE,
+           lab_size  = 3.5,
+           colors    = c("#2196F3", "white", "#F44336"),
+           title     = "Correlation Matrix of Numerical Features",
+           ggtheme   = theme_minimal())
+```
+
+# Data Preprocessing
+
+## Step 1 — Remove Irrelevant Column
+
+```{r preprocess-id}
+
+# PREPROCESSING: Drop 'id'
+
+stroke_df <- stroke_raw %>% select(-id)
+cat("'id' column removed. Remaining columns:", ncol(stroke_df), "\n")
+```
+
+## Step 2 — Remove Rare / Uninformative Categories
+
+```{r preprocess-gender}
+
+# PREPROCESSING: Remove 'Other' gender (only 1 record) to avoid
+# noise and encoding issues
+
+cat("Gender value counts before filter:\n")
+print(table(stroke_df$gender))
+
+stroke_df <- stroke_df %>% filter(gender != "Other")
+cat("\nRows after removing 'Other' gender:", nrow(stroke_df), "\n")
+```
+
+## Step 3 — Handle Missing Values
+
+```{r preprocess-missing-values}
+
+# BMI: Replace N/A with median
+# smoking_status: Replace with 'Unknown' (meaningful category)
+
+stroke_df$bmi <- as.numeric(stroke_df$bmi)
+bmi_median <- median(stroke_df$bmi, na.rm = TRUE)
+stroke_df$bmi[is.na(stroke_df$bmi)] <- bmi_median
+
+cat("BMI missing values filled with median:", bmi_median, "\n")
+
+stroke_df$smoking_status[is.na(stroke_df$smoking_status)] <- "Unknown"
+
+# Confirm no missing values remain
+remaining_na <- sum(is.na(stroke_df))
+cat("Total missing values after imputation:", remaining_na, "\n")
+```
+
+## Step 4 — Outlier Capping (Winsorization)
+
+```{r preprocess-outliers}
+
+# PREPROCESSING: Cap outliers at 1st and 99th percentile
+# Applies to: avg_glucose_level, bmi
+
+winsorize <- function(x, lower_pct = 0.01, upper_pct = 0.99) {
+  lower <- quantile(x, lower_pct, na.rm = TRUE)
+  upper <- quantile(x, upper_pct, na.rm = TRUE)
+  pmin(pmax(x, lower), upper)
+}
+
+stroke_df$avg_glucose_level <- winsorize(stroke_df$avg_glucose_level)
+stroke_df$bmi                <- winsorize(stroke_df$bmi)
+
+cat("Outlier capping applied to 'avg_glucose_level' and 'bmi'.\n")
+```
+
+## Step 5 — Encode Categorical Variables
+
+```{r preprocess-encoding}
+
+# PREPROCESSING: Encode categorical variables as factors
+# Then convert to numeric for model compatibility
+
+cat_cols <- c("gender", "ever_married", "work_type", "Residence_type", "smoking_status")
+
+stroke_df[cat_cols] <- lapply(stroke_df[cat_cols], as.factor)
+
+# Encode target variable as factor with readable levels
+stroke_df$stroke <- factor(stroke_df$stroke,
+                            levels = c(0, 1),
+                            labels = c("No_Stroke", "Stroke"))
+
+cat("Categorical variables encoded as factors.\n")
+cat("Target variable levels:", levels(stroke_df$stroke), "\n")
+```
+
+## Step 6 — Feature Engineering
+
+```{r preprocess-feature-engineering}
+
+# PREPROCESSING (FEATURE ENGINEERING):
+# Create new meaningful features to boost model performance
+
+# 1. Age group
+stroke_df$age_group <- cut(stroke_df$age,
+  breaks = c(0, 18, 40, 60, Inf),
+  labels = c("Child", "Young", "Middle_Aged", "Senior"),
+  right  = FALSE
+)
+
+# 2. Glucose risk category
+stroke_df$glucose_risk <- cut(stroke_df$avg_glucose_level,
+  breaks = c(0, 100, 126, Inf),
+  labels = c("Normal", "Pre_Diabetic", "Diabetic"),
+  right  = FALSE
+)
+
+# 3. BMI category
+stroke_df$bmi_category <- cut(stroke_df$bmi,
+  breaks = c(0, 18.5, 24.9, 29.9, Inf),
+  labels = c("Underweight", "Normal", "Overweight", "Obese"),
+  right  = FALSE
+)
+
+# 4. Comorbidity score — sum of hypertension and heart_disease
+stroke_df$comorbidity_score <- stroke_df$hypertension + stroke_df$heart_disease
+
+cat("Feature engineering complete. New features: age_group, glucose_risk, bmi_category, comorbidity_score\n")
+cat("Total features after engineering:", ncol(stroke_df) - 1, "(excluding target)\n")
+```
+
+## Step 7 — Normalize Numerical Features
+
+```{r preprocess-normalization}
+
+# PREPROCESSING: Min-Max normalization for numerical features
+# Ensures all features are on [0, 1] scale for SVM and others
+
+normalize <- function(x) {
+  rng <- range(x, na.rm = TRUE)
+  if (diff(rng) == 0) return(rep(0, length(x)))
+  (x - rng[1]) / diff(rng)
+}
+
+num_cols_to_scale <- c("age", "avg_glucose_level", "bmi", "comorbidity_score")
+stroke_df[num_cols_to_scale] <- lapply(stroke_df[num_cols_to_scale], normalize)
+
+cat("Numerical features normalized to [0, 1]:", paste(num_cols_to_scale, collapse = ", "), "\n")
+```
+
+## Step 8 — Reduce Skewness (Log Transform Check)
+
+```{r preprocess-skewness}
+
+# PREPROCESSING: Skewness has already been partially addressed
+# via outlier capping and normalization.
+
+skew_check <- sapply(stroke_df[c("avg_glucose_level", "bmi")],
+                     function(x) round(e1071::skewness(x), 3))
+
+kable(data.frame(Feature = names(skew_check), Skewness = skew_check),
+      row.names = FALSE,
+      caption   = "Skewness of Numerical Features After Preprocessing") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
+```
+
+## Preprocessed Dataset Preview
+
+```{r preprocess-preview}
+
+cat("Final dataset dimensions:", nrow(stroke_df), "rows x", ncol(stroke_df), "columns\n\n")
+cat("Column types after preprocessing:\n")
+str(stroke_df)
+```
+
+# Modeling
+
+## Train-Test Split
+
+```{r Train-Test split}
+
+# MODELING: Stratified 80/20 train-test split
+
+set.seed(42)
+
+train_index <- createDataPartition(stroke_df$stroke, p = 0.80, list = FALSE)
+train_data  <- stroke_df[train_index,  ]
+test_data   <- stroke_df[-train_index, ]
+
+cat("Training set:", nrow(train_data), "rows\n")
+cat("Test set    :", nrow(test_data),  "rows\n")
+cat("\nClass distribution in training set:\n")
+print(prop.table(table(train_data$stroke)))
+cat("\nClass distribution in test set:\n")
+print(prop.table(table(test_data$stroke)))
+```
+
+## Handling Class Imbalance via ROSE
+
+```{r ROSE}
+
+set.seed(42)
+train_balanced <- ROSE(stroke ~ ., data = train_data, seed = 42)$data
+
+cat("Balanced training set class distribution:\n")
+print(table(train_balanced$stroke))
+```
+
+## Cross-Validation Setup
+
+```{r CV}
+
+# MODELING: 5-fold cross-validation configuration
+
+ctrl <- trainControl(
+  method          = "cv",
+  number          = 5,
+  classProbs      = TRUE,
+  summaryFunction = twoClassSummary,
+  savePredictions = "final"
+)
+cat("Cross-validation: 5-fold, with class probabilities enabled.\n")
+```
+
+## Helper Function: Evaluation Metrics
+
+```{r Helper-Evaluation Metrics}
+
+# MODELING: Reusable function to compute Accuracy, Precision,
+# Recall, and F1-score from a confusion matrix
+
+compute_metrics <- function(actual, predicted, positive_class = "Stroke") {
+  cm     <- confusionMatrix(predicted, actual, positive = positive_class)
+  acc    <- cm$overall["Accuracy"]
+  prec   <- cm$byClass["Precision"]
+  recall <- cm$byClass["Recall"]
+  f1     <- cm$byClass["F1"]
+
+  list(
+    ConfusionMatrix = cm,
+    Metrics = data.frame(
+      Metric = c("Accuracy", "Precision", "Recall", "F1-Score"),
+      Value  = round(c(acc, prec, recall, f1), 4)
+    )
+  )
+}
+```
+
+
+## Model 1 — Logistic Regression (Baseline)
+
+```{r LR}
+
+# MODEL 1: Logistic Regression
+
+set.seed(42)
+cat("Training Logistic Regression...\n")
+
+model_lr <- train(
+  stroke ~ .,
+  data      = train_balanced,
+  method    = "glm",
+  family    = "binomial",
+  trControl = ctrl,
+  metric    = "ROC"
+)
+
+# Predict on test set
+pred_lr      <- predict(model_lr, newdata = test_data)
+results_lr   <- compute_metrics(test_data$stroke, pred_lr)
+
+cat("\nLogistic Regression — Test Set Performance:\n")
+print(results_lr$ConfusionMatrix$table)
+print(results_lr$Metrics)
+```
+
+## Model 2 — Random Forest
+
+```{r RF}
+
+# MODEL 2: Random Forest
+
+set.seed(42)
+cat("Training Random Forest (this may take a moment)...\n")
+
+rf_grid <- expand.grid(mtry = c(3, 5, 7))
+
+model_rf <- train(
+  stroke ~ .,
+  data      = train_balanced,
+  method    = "rf",
+  trControl = ctrl,
+  tuneGrid  = rf_grid,
+  ntree     = 200,
+  metric    = "ROC"
+)
+
+# Predict on test set
+pred_rf    <- predict(model_rf, newdata = test_data)
+results_rf <- compute_metrics(test_data$stroke, pred_rf)
+
+cat("\nRandom Forest — Best mtry:", model_rf$bestTune$mtry, "\n")
+cat("Random Forest — Test Set Performance:\n")
+print(results_rf$ConfusionMatrix$table)
+print(results_rf$Metrics)
+```
+
+### Random Forest: Feature Importance
+
+```{r RF-Feature Importance}
+
+#Variable importance from Random Forest
+# Shows which features most influence stroke prediction
+
+importance_df <- varImp(model_rf)$importance %>%
+  rownames_to_column("Feature") %>%
+  arrange(desc(Overall)) %>%
+  head(15)
+
+ggplot(importance_df, aes(x = reorder(Feature, Overall), y = Overall,
+                           fill = Overall)) +
+  geom_bar(stat = "identity", width = 0.7) +
+  scale_fill_gradient(low = "#90CAF9", high = "#0D47A1") +
+  coord_flip() +
+  labs(title = "Random Forest: Top 15 Feature Importances",
+       x     = "Feature",
+       y     = "Importance Score") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none")
+```
+
+
+## Model 3 — Support Vector Machine (SVM)
+
+```{r SVM}
+
+# MODEL 3: Support Vector Machine
+
+set.seed(42)
+cat("Training Support Vector Machine...\n")
+
+svm_grid <- expand.grid(C = c(0.5, 1, 2), sigma = c(0.01, 0.05))
+
+model_svm <- train(
+  stroke ~ .,
+  data      = train_balanced,
+  method    = "svmRadial",
+  trControl = ctrl,
+  tuneGrid  = svm_grid,
+  metric    = "ROC"
+)
+
+# Predict on test set
+pred_svm    <- predict(model_svm, newdata = test_data)
+results_svm <- compute_metrics(test_data$stroke, pred_svm)
+
+cat("\nSVM — Best Parameters: C =", model_svm$bestTune$C,
+    ", sigma =", model_svm$bestTune$sigma, "\n")
+cat("SVM — Test Set Performance:\n")
+print(results_svm$ConfusionMatrix$table)
+print(results_svm$Metrics)
+```
+
+
+## 1. Comparative Metrics Table
+```{r Comparative Analysis}
+
+comparison_table <- data.frame(
+  Model     = c("Logistic Regression", "Random Forest", "SVM (Radial)"),
+  Accuracy  = c(
+    results_lr$Metrics$Value[1],
+    results_rf$Metrics$Value[1],
+    results_svm$Metrics$Value[1]
+  ),
+  Precision = c(
+    results_lr$Metrics$Value[2],
+    results_rf$Metrics$Value[2],
+    results_svm$Metrics$Value[2]
+  ),
+  Recall    = c(
+    results_lr$Metrics$Value[3],
+    results_rf$Metrics$Value[3],
+    results_svm$Metrics$Value[3]
+  ),
+  F1_Score  = c(
+    results_lr$Metrics$Value[4],
+    results_rf$Metrics$Value[4],
+    results_svm$Metrics$Value[4]
+  )
+)
+
+# Show in HTML
+knitr::kable(comparison_table, caption = "Model Comparison Table")
+
+# Open in separate tab (Viewer)
+View(comparison_table)
+```
+
+## 2. ROC Curve - Probability Computation
+```{r ROC}
+
+# Convert target properly
+true_labels <- ifelse(test_data$stroke == "Stroke", 1, 0)
+
+prob_lr  <- predict(model_lr,  test_data, type = "prob")[, "Stroke"]
+prob_rf  <- predict(model_rf,  test_data, type = "prob")[, "Stroke"]
+prob_svm <- predict(model_svm, test_data, type = "prob")[, "Stroke"]
+
+roc_lr  <- pROC::roc(true_labels, prob_lr)
+roc_rf  <- pROC::roc(true_labels, prob_rf)
+roc_svm <- pROC::roc(true_labels, prob_svm)
+```
+
+## 3. ROC Dataframe Binding
+```{r ROC Plot}
+
+build_roc_df <- function(roc_obj, model_name){
+  data.frame(
+    TPR = roc_obj$sensitivities,
+    FPR = 1 - roc_obj$specificities,
+    Model = model_name
+  )
+}
+
+roc_df <- dplyr::bind_rows(
+  build_roc_df(roc_lr,  "Logistic Regression"),
+  build_roc_df(roc_rf,  "Random Forest"),
+  build_roc_df(roc_svm, "SVM")
+)
+
+ggplot(roc_df, aes(x = FPR, y = TPR, color = Model)) +
+  geom_line(size = 1.2) +
+  scale_color_manual(values = c("#1976D2", "#388E3C", "#F57C00")) +
+  geom_abline(linetype = "dashed") +
+  labs(title = "ROC Curve Comparison",
+       x = "False Positive Rate",
+       y = "True Positive Rate") +
+  theme_minimal()
+```
+
+## 4. Confusion Matrix Visualization
+```{r Confusion Matrix}
+
+plot_cm <- function(actual, predicted, title){
+  cm <- table(actual, predicted)
+  df <- as.data.frame(cm)
+  
+  ggplot(df, aes(x = predicted, y = actual, fill = Freq)) +
+    geom_tile() +
+    geom_text(aes(label = Freq), color = "white", size = 5) +
+    labs(title = title, x = "Predicted", y = "Actual") +
+    theme_minimal()
+}
+
+cm1 <- plot_cm(test_data$stroke, pred_lr,  "Logistic Regression")
+cm2 <- plot_cm(test_data$stroke, pred_rf,  "Random Forest")
+cm3 <- plot_cm(test_data$stroke, pred_svm, "SVM (Radial)")
+
+gridExtra::grid.arrange(cm1, cm2, cm3, ncol = 3)
+```
+
+## 5. AUC Summary Table
+```{r AUC Table}
+
+auc_df <- data.frame(
+  Model = c("Logistic Regression", "Random Forest", "SVM (Radial)"),
+  AUC   = round(c(pROC::auc(roc_lr), pROC::auc(roc_rf), pROC::auc(roc_svm)), 4)
+)
+
+knitr::kable(auc_df, caption = "AUC Comparison")
+View(auc_df)
+```

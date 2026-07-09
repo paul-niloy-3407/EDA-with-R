@@ -1,0 +1,245 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+\documentclass[
+]{article}
+\usepackage{xcolor}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{graphicx}
+\makeatletter
+\newsavebox\pandoc@box
+\newcommand*\pandocbounded[1]{% scales image to fit in text height/width
+  \sbox\pandoc@box{#1}%
+  \Gscale@div\@tempa{\textheight}{\dimexpr\ht\pandoc@box+\dp\pandoc@box\relax}%
+  \Gscale@div\@tempb{\linewidth}{\wd\pandoc@box}%
+  \ifdim\@tempb\p@<\@tempa\p@\let\@tempa\@tempb\fi% select the smaller of both
+  \ifdim\@tempa\p@<\p@\scalebox{\@tempa}{\usebox\pandoc@box}%
+  \else\usebox{\pandoc@box}%
+  \fi%
+}
+% Set default figure placement to htbp
+\def\fps@figure{htbp}
+\makeatother
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\usepackage{bookmark}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+\hypersetup{
+  pdftitle={D 23-50400-1 L07},
+  pdfauthor={Niloy Paul},
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\title{D 23-50400-1 L07}
+\author{Niloy Paul}
+\date{2026-04-21}
+
+\begin{document}
+\maketitle
+
+library(ggplot2) library(dplyr) library(caret) library(readr)
+
+library(rpart) library(rpart.plot)
+
+data \textless- iris head(data)
+
+summary(data)
+
+ggplot(data, aes(x = Sepal.Length)) + geom\_histogram(bins = 30, fill =
+``steelblue'', alpha = 0.7) + theme\_minimal()
+
+pairs(data{[},1:4{]}, main = ``Pair Plot of Features'')
+
+num\_data \textless- data \%\textgreater\% select\_if(is.numeric)
+cor(num\_data)
+
+\section{Check missing values}\label{check-missing-values}
+
+colSums(is.na(data))
+
+\section{Scaling numeric features}\label{scaling-numeric-features}
+
+\section{Important for many ML models (though trees don't require
+it)}\label{important-for-many-ml-models-though-trees-dont-require-it}
+
+num\_cols \textless- data \%\textgreater\% select\_if(is.numeric)
+
+scaled\_features \textless- scale(num\_cols)
+
+\section{Replace original numeric columns with scaled
+values}\label{replace-original-numeric-columns-with-scaled-values}
+
+data\_scaled \textless- data data\_scaled{[}, names(num\_cols){]}
+\textless- scaled\_features
+
+\section{Check structure}\label{check-structure}
+
+str(data\_scaled)
+
+\section{Regression split}\label{regression-split}
+
+trainIndex \textless- createDataPartition(data\_scaled\$Sepal.Length, p
+= 0.8, list = FALSE)
+
+train\_data \textless- data\_scaled{[}trainIndex, {]} test\_data
+\textless- data\_scaled{[}-trainIndex, {]}
+
+lm\_model \textless- lm(Sepal.Length \textasciitilde{} Sepal.Width +
+Petal.Length + Petal.Width, data = train\_data) summary(lm\_model)
+
+pred\_lm \textless- predict(lm\_model, newdata = test\_data) rmse
+\textless- sqrt(mean((test\_data\$Sepal.Length - pred\_lm)\^{}2)) rmse
+
+plot(test\_data\$Sepal.Length, pred\_lm, xlab = ``Actual'', ylab =
+``Predicted'', main = ``Actual vs Predicted'') abline(0, 1, col =
+``red'')
+
+\section{Classification split (use original data, scaling not
+required)}\label{classification-split-use-original-data-scaling-not-required}
+
+trainIndex2 \textless- createDataPartition(data\$Species, p = 0.8, list
+= FALSE)
+
+train\_cls \textless- data{[}trainIndex2, {]} test\_cls \textless-
+data{[}-trainIndex2, {]}
+
+dt\_model \textless- rpart(Species \textasciitilde{} ., data =
+train\_cls, method = ``class'') rpart.plot(dt\_model)
+
+dt\_model\$variable.importance
+
+pred\_dt \textless- predict(dt\_model, test\_cls, type = ``class'')
+confusionMatrix(pred\_dt, test\_cls\$Species)
+
+\#Exercise based on own dataset
+
+file\_id \textless- ``1QBkrF-waQtZdRKXCQbuCnYsythc-2ggS''
+
+drive\_url \textless- paste0( ``\url{https://drive.google.com/uc?id=}'',
+file\_id, ``\&export=download'' )
+
+dataset \textless- read\_csv(drive\_url, show\_col\_types = FALSE)
+
+\#Basic EDA head(dataset) summary(dataset) str(dataset)
+
+\#Convert Categorical Variables dataset\(sex <- as.factor(dataset\)sex)
+dataset\(smoker <- as.factor(dataset\)smoker)
+dataset\(region <- as.factor(dataset\)region)
+
+\#Distribution Plot ggplot(dataset, aes(x = charges)) +
+geom\_histogram(bins = 30, fill = ``steelblue'', alpha = 0.7) +
+theme\_minimal()
+
+\#Pair plot (numeric only) num\_data \textless- dataset \%\textgreater\%
+select\_if(is.numeric) pairs(num\_data, main = ``Pair Plot of Numeric
+Features'')
+
+\section{Correlation}\label{correlation}
+
+cor(num\_data)
+
+\section{Missing values}\label{missing-values}
+
+colSums(is.na(dataset))
+
+\section{Train-test split}\label{train-test-split}
+
+trainIndex \textless- createDataPartition(dataset\$charges, p = 0.8,
+list = FALSE)
+
+train\_data \textless- dataset{[}trainIndex, {]} test\_data \textless-
+dataset{[}-trainIndex, {]}
+
+\section{Linear regression model}\label{linear-regression-model}
+
+lm\_model \textless- lm(charges \textasciitilde{} age + bmi + children +
+sex + smoker + region, data = train\_data)
+
+summary(lm\_model)
+
+\section{Prediction}\label{prediction}
+
+pred\_lm \textless- predict(lm\_model, newdata = test\_data)
+
+\section{RMSE}\label{rmse}
+
+rmse \textless- sqrt(mean((test\_data\$charges - pred\_lm)\^{}2)) rmse
+
+\section{Plot}\label{plot}
+
+plot(test\_data\$charges, pred\_lm, xlab = ``Actual'', ylab =
+``Predicted'', main = ``Actual vs Predicted'')
+
+abline(0, 1, col = ``red'')
+
+\section{Create classification
+target}\label{create-classification-target}
+
+dataset\(charge_level <- ifelse(dataset\)charges \textgreater{}
+median(dataset\(charges), "High", "Low")
+dataset\)charge\_level \textless- as.factor(dataset\$charge\_level)
+
+\section{Train-test split}\label{train-test-split-1}
+
+trainIndex2 \textless- createDataPartition(dataset\$charge\_level, p =
+0.8, list = FALSE)
+
+train\_cls \textless- dataset{[}trainIndex2, {]} test\_cls \textless-
+dataset{[}-trainIndex2, {]}
+
+\section{Decision Tree}\label{decision-tree}
+
+dt\_model \textless- rpart(charge\_level \textasciitilde{} age + bmi +
+children + sex + smoker + region, data = train\_cls, method = ``class'')
+
+\section{Plot tree}\label{plot-tree}
+
+rpart.plot(dt\_model)
+
+\section{Feature importance}\label{feature-importance}
+
+dt\_model\$variable.importance
+
+\section{Prediction}\label{prediction-1}
+
+pred\_dt \textless- predict(dt\_model, test\_cls, type = ``class'')
+
+\section{Confusion matrix}\label{confusion-matrix}
+
+confusionMatrix(pred\_dt, test\_cls\$charge\_level)
+
+\end{document}
